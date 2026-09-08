@@ -351,7 +351,7 @@ Version gating config. Not synced.
 Computed from `site_ratings` and `visits`. Not tables. Not synced.
 
 | View | Derives |
-| --- | --- | --- |
+| --- | --- |
 | `site_stats` | Per-site rating and visit aggregates from `site_ratings` and `visits` |
 | `campground_stats` | Per-campground aggregates rolled up from site-level ratings and visits |
 | `personal_site_stats` | Per-user, per-site aggregates from that user's `site_ratings` and `visits` |
