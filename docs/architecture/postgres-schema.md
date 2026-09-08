@@ -42,10 +42,9 @@ erDiagram
 
   users {
     text id PK
-    text email
     text display_name
     text role
-    jsonb linked_providers
+    text_array linked_providers
     timestamptz created_at
     timestamptz updated_at
     timestamptz deleted_at
@@ -173,7 +172,7 @@ erDiagram
 
 `sites.campground_name`, `visits.site_name`, and `visits.campground_name` are denormalized for offline and UI; the foreign key is authoritative when present.
 
-`visits.shared_with` is a `text[]` of user ids, not a join table.
+`visits.shared_with` is a `text[]` of Firebase uids, not a join table.
 
 `app_platforms` has no foreign key to `users` and is not in the sync protocol.
 
@@ -181,16 +180,19 @@ erDiagram
 
 ### `users`
 
+Firebase uid lives here as the primary key. Other tables reference this row (`created_by` / `user_id`) for ownership.
+
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `text` PK | Firebase uid |
-| `email` | `text` null | |
 | `display_name` | `text` null | |
 | `role` | `text` not null default `'user'` | `'admin'` for admins |
-| `linked_providers` | `jsonb` not null default `'[]'` | e.g. email, apple |
+| `linked_providers` | `text[]` not null default `'{}'` | Denormalized copy of Auth sign-in methods (`email`, `apple`); see architecture note |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
+
+Email is not stored here. Auth owns email; feedback may carry an optional contact email on the feedback row.
 
 ### `campgrounds`
 
@@ -203,7 +205,7 @@ erDiagram
 | `total_ratings` | `integer` not null default 0 | |
 | `rating_sum` | `integer` not null default 0 | |
 | `total_visits` | `integer` not null default 0 | |
-| `created_by` | `text` not null | FK → `users.id` |
+| `created_by` | `text` not null | FK → `users.id` (owner) |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
@@ -223,7 +225,7 @@ erDiagram
 | `total_ratings` | `integer` not null default 0 | |
 | `rating_sum` | `integer` not null default 0 | |
 | `total_visits` | `integer` not null default 0 | |
-| `created_by` | `text` not null | FK → `users.id` |
+| `created_by` | `text` not null | FK → `users.id` (owner) |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
@@ -236,7 +238,7 @@ erDiagram
 | `site_id` | `uuid` null | FK → `sites.id` |
 | `site_name` | `text` null | Denormalized |
 | `campground_name` | `text` null | Denormalized |
-| `created_by` | `text` not null | FK → `users.id` |
+| `created_by` | `text` not null | FK → `users.id` (owner) |
 | `start_date` | `timestamptz` not null | |
 | `end_date` | `timestamptz` not null | |
 | `visit_rating` | `smallint` not null | 1–5 |
@@ -244,7 +246,7 @@ erDiagram
 | `notes` | `text` null | |
 | `photos` | `text[]` not null default `'{}'` | Firebase Storage URLs |
 | `visibility` | `text` not null default `'private'` | private / public / shared |
-| `shared_with` | `text[]` not null default `'{}'` | |
+| `shared_with` | `text[]` not null default `'{}'` | Firebase uids |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
@@ -279,7 +281,7 @@ Unique on (`visit_id`, `day`) where `deleted_at` is null.
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
 | `site_id` | `uuid` not null | FK → `sites.id` |
-| `user_id` | `text` not null | FK → `users.id` |
+| `user_id` | `text` not null | FK → `users.id` (owner of this rating) |
 | `visit_id` | `uuid` null | FK → `visits.id` |
 | `rating` | `smallint` not null | 1–5 |
 | `created_at` | `timestamptz` not null | |
@@ -291,7 +293,7 @@ Unique on (`visit_id`, `day`) where `deleted_at` is null.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
-| `user_id` | `text` not null | FK → `users.id` |
+| `user_id` | `text` not null | FK → `users.id` (owner of this aggregate) |
 | `target_id` | `uuid` not null | Site or campground id |
 | `target_type` | `text` not null | `site` or `campground` |
 | `rating_sum` | `integer` not null default 0 | |
@@ -310,8 +312,8 @@ Unique on (`user_id`, `target_type`, `target_id`) where `deleted_at` is null.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
-| `user_id` | `text` not null | FK → `users.id` |
-| `email` | `text` null | |
+| `user_id` | `text` not null | FK → `users.id` (owner of this feedback) |
+| `email` | `text` null | Optional contact for follow-up; not the account email mirror |
 | `message` | `text` not null | |
 | `type` | `text` not null | bug / featureRequest / general |
 | `device` | `text` not null | |
