@@ -6,6 +6,62 @@ Based on current Firestore shapes in [`campnotes-ios/docs/datamodel.md`](https:/
 
 Parent architecture: [firestore-to-neon-railway.md](./firestore-to-neon-railway.md)
 
+## Relationships
+
+```text
+users (id = Firebase uid)
+  │
+  ├──< campgrounds.created_by
+  ├──< sites.created_by
+  ├──< visits.created_by
+  ├──< site_ratings.user_id
+  ├──< personal_ratings.user_id
+  └──< feedback.user_id
+
+campgrounds
+  │
+  └──< sites.campground_id     (one campground has many sites)
+
+sites
+  │
+  ├──< visits.site_id          (one site has many visits; visit.site_id nullable)
+  └──< site_ratings.site_id    (one site has many ratings)
+
+visits
+  │
+  └── site_ratings.visit_id    (optional link; rating may reference the visit that produced it)
+
+personal_ratings
+  │
+  └── target_id + target_type  (polymorphic: points at sites.id OR campgrounds.id)
+                               unique (user_id, target_type, target_id) when not deleted
+
+app_platforms                  (standalone; no FK to users)
+```
+
+### Cardinality
+
+| From | To | Relationship |
+| --- | --- | --- |
+| `users` | `campgrounds` | One user creates many campgrounds (`created_by`) |
+| `users` | `sites` | One user creates many sites (`created_by`) |
+| `users` | `visits` | One user owns many visits (`created_by`) |
+| `users` | `site_ratings` | One user authors many site ratings (`user_id`) |
+| `users` | `personal_ratings` | One user has many personal rating rows (`user_id`) |
+| `users` | `feedback` | One user submits many feedback rows (`user_id`) |
+| `campgrounds` | `sites` | One campground has many sites (`campground_id`) |
+| `sites` | `visits` | One site has many visits (`site_id`; nullable on visit) |
+| `sites` | `site_ratings` | One site has many ratings (`site_id`) |
+| `visits` | `site_ratings` | One visit may link to one rating row (`visit_id`; optional) |
+| `personal_ratings` | `sites` or `campgrounds` | Each row targets exactly one site **or** one campground via `target_type` + `target_id` |
+
+### Notes
+
+- `sites.campground_name`, `visits.site_name`, and `visits.campground_name` are **denormalized copies** for offline/UI convenience; the FK is the source of truth when present.
+- `visits.shared_with` is a `text[]` of user ids, **not** a join table (parity with Firestore; sharing still deferred in product).
+- `personal_ratings.target_id` is not a single FK constraint because it can point at either `sites` or `campgrounds`; enforce with `target_type` + app/row-rule checks.
+- Soft deletes: FKs should use `ON DELETE RESTRICT` (or equivalent) so tombstones stay coherent; purge of tombstoned rows is a later ops concern.
+
 ## Sync columns (every synced table)
 
 | Column | Type | Notes |
