@@ -15,7 +15,7 @@ These participate in offline push/pull sync. Each includes:
 - `updated_at` — `timestamptz`; phone proposes, server accepts only if newer than stored
 - `deleted_at` — `timestamptz` null; soft-delete tombstone
 
-Synced tables: `users`, `campgrounds`, `sites`, `visits`, `visit_weather`, `site_ratings`, `personal_ratings`, `feedback`.
+Synced tables: `users`, `user_auth_providers`, `campgrounds`, `sites`, `visits`, `visit_weather`, `site_ratings`, `personal_ratings`, `feedback`.
 
 Foreign keys use `ON DELETE RESTRICT` so soft-deleted rows stay coherent.
 
@@ -27,6 +27,7 @@ Foreign keys use `ON DELETE RESTRICT` so soft-deleted rows stay coherent.
 
 ```mermaid
 erDiagram
+  users ||--o{ user_auth_providers : user_id
   users ||--o{ campgrounds : created_by
   users ||--o{ sites : created_by
   users ||--o{ visits : created_by
@@ -44,7 +45,15 @@ erDiagram
     text id PK
     text display_name
     text role
-    text_array linked_providers
+    timestamptz created_at
+    timestamptz updated_at
+    timestamptz deleted_at
+  }
+
+  user_auth_providers {
+    uuid id PK
+    text user_id FK
+    text provider
     timestamptz created_at
     timestamptz updated_at
     timestamptz deleted_at
@@ -187,12 +196,26 @@ Firebase uid lives here as the primary key. Other tables reference this row (`cr
 | `id` | `text` PK | Firebase uid |
 | `display_name` | `text` null | |
 | `role` | `text` not null default `'user'` | `'admin'` for admins |
-| `linked_providers` | `text[]` not null default `'{}'` | Denormalized copy of Auth sign-in methods (`email`, `apple`); see architecture note |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
-Email is not stored here. Auth owns email; feedback may carry an optional contact email on the feedback row.
+Email is not stored here. Auth owns email; feedback may carry an optional contact email on the feedback row. Linked sign-in methods live in `user_auth_providers`.
+
+### `user_auth_providers`
+
+One row per Auth sign-in method linked to the account. Denormalized mirror of Auth for the app user model (same role as today’s Firestore `linkedProviders` array). Auth remains source of truth for sign-in.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | Phone-minted |
+| `user_id` | `text` not null | FK → `users.id` (owner) |
+| `provider` | `text` not null | `email` or `apple` |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | |
+| `deleted_at` | `timestamptz` null | |
+
+Unique on (`user_id`, `provider`) where `deleted_at` is null.
 
 ### `campgrounds`
 
@@ -341,7 +364,7 @@ Version gating. Read by the client when it checks whether the installed build is
 
 The server verifies the Firebase ID token and sets database user context. Postgres row rules enforce access:
 
-- `users`: owner of own row; admin all
+- `users`, `user_auth_providers`: owner of own row; admin all
 - `visits`, `visit_weather`, `feedback`, `personal_ratings`, `site_ratings`: owning user (via visit owner or direct user id); admin all
 - `campgrounds`, `sites`: authenticated read; create as authenticated; update/delete owner or admin
 - `app_platforms`: authenticated read; admin write
