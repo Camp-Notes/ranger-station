@@ -1,6 +1,6 @@
 # Firestore → Neon + Railway
 
-Camp Notes data lives in Neon Postgres. The iOS app talks to a Node API on Railway. Firebase remains for Auth and Storage. Auth-triggered Cloud Functions (for example account deletion) stay on Firebase. Rating aggregates and other data jobs run on the Railway API.
+Camp Notes data lives in Neon Postgres. The iOS app talks to a Node API on Railway. Firebase remains for Auth and Storage. Auth-triggered Cloud Functions (for example account deletion) stay on Firebase. Remaining data jobs (not rating rollups) run on the Railway API.
 
 ## Stack
 
@@ -21,15 +21,17 @@ Firebase projects today: `camp-notes-dev` (dev), `campmate-cctplus` (prod).
 
 ## Offline and sync
 
-The phone holds the working copy in SwiftData. Campgrounds, sites, visits, weather days, ratings, feedback, and user profile rows work without network.
+The phone holds the working copy in SwiftData. Synced tables: `users`, `user_auth_providers`, `campgrounds`, `sites`, `site_amenities`, `site_tags`, `visits`, `visit_weather`, `visit_photos`, `visit_shares`, `site_ratings`, `feedback`, `feedback_screenshots`.
 
 When online, the app pushes queued edits, then pulls changes since a cursor over HTTP. Conflict rule: the phone sends `updated_at`; the server accepts the write only if that timestamp is newer than what is stored. New rows use phone-minted UUIDs. Deletes are soft (`deleted_at`) so they propagate on pull.
 
-Photos stay in Firebase Storage: the phone queues local files, uploads when online, then syncs the download URL with the record.
+Rating and visit aggregates are computed (views / query), not synced as stored columns or tables.
+
+Photos: files in Firebase Storage; metadata as `visit_photos` rows (and `feedback_screenshots` for feedback). The phone queues local files, uploads when online, then syncs the storage URL with the row.
 
 Anonymous Firebase users sync the same way as signed-in users.
 
-Version gating (`app_platforms`) is not part of sync. The app fetches required/latest versions and checks the installed build against them.
+Version gating (`app_platforms`) is config, not sync. The app fetches required/latest versions and checks the installed build against them.
 
 ## Cutover
 
