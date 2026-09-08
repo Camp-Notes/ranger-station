@@ -35,4 +35,4 @@ Version gating (`app_platforms`) is config, not sync. The app fetches required/l
 
 ## Cutover
 
-Hard cutover: build API and schema, rehearse Firestore → Postgres migrate on the Neon dev branch, soak a TestFlight build against the API, run prod migrate and flip, keep a short Firestore read-only window, then remove hot Firestore data paths from the app.
+Hard cutover: build API and schema, rehearse Firestore → Postgres migrate on the Neon dev branch, ship a TestFlight build pointed at the new API and run it for a while to catch issues, run prod migrate and flip, keep a short Firestore read-only window, then remove hot Firestore data paths from the app.
