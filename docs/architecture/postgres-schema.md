@@ -1,25 +1,32 @@
-# Postgres schema (draft)
+# Postgres schema
 
-First-cut relational schema for the Firestore → Neon migration.
+Locked relational schema for the Firestore → Neon migration.
 
-Source of truth for current shapes: [`campnotes-ios/docs/datamodel.md`](https://github.com/Camp-Notes/campnotes-ios/blob/main/docs/datamodel.md) plus Swift models under `AppPackage/Sources/Models`.
+Based on current Firestore shapes in [`campnotes-ios/docs/datamodel.md`](https://github.com/Camp-Notes/campnotes-ios/blob/main/docs/datamodel.md) and Swift models under `AppPackage/Sources/Models`, plus migration decisions locked 2026-09-08.
 
-Sync columns on every synced table (locked decisions):
+Parent architecture: [firestore-to-neon-railway.md](./firestore-to-neon-railway.md)
+
+## Sync columns (every synced table)
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | `uuid` (unless noted) | Phone-minted; unique |
-| `created_at` | `timestamptz` | |
-| `updated_at` | `timestamptz` | Phone proposes; server accepts only if newer |
+| `id` | `uuid` PK (unless noted) | Phone-minted; unique |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | Phone proposes; server accepts only if newer than stored |
 | `deleted_at` | `timestamptz` null | Soft-delete tombstone |
 
-Row rules: owner (and admin via `users.role`) for private rows; authenticated read for shared catalog as needed. Exact policies land in #15.
+Enable PostGIS. Campground and site locations use a PostGIS point (not separate lat/lng + geohash columns).
 
----
+## Out of scope for this migration
 
-## `users`
+- **Achievements** — leave on Firestore / out of Postgres for now
+- **Release notes** — not in use; do not migrate
 
-Keyed by Firebase Auth uid (text, not uuid).
+## In scope
+
+### `users`
+
+Keyed by Firebase Auth uid (`text`, not uuid).
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -27,30 +34,24 @@ Keyed by Firebase Auth uid (text, not uuid).
 | `email` | `text` null | Anonymous may be null |
 | `display_name` | `text` null | |
 | `role` | `text` not null default `'user'` | `'admin'` for admins |
-| `linked_providers` | `jsonb` not null default `'[]'` | `email`, `apple`, … |
-| `created_at` / `updated_at` / `deleted_at` | | |
+| `linked_providers` | `jsonb` not null default `'[]'` | e.g. email, apple |
+| sync columns | | |
 
----
-
-## `campgrounds`
+### `campgrounds`
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | |
 | `name` | `text` not null | |
-| `latitude` | `double precision` not null | |
-| `longitude` | `double precision` not null | |
-| `geo_hash2` … `geo_hash9` | `text` null | Keep for map queries; may later use PostGIS |
+| `location` | PostGIS point not null | |
 | `average_rating` | `double precision` not null default 0 | Derived |
 | `total_ratings` | `integer` not null default 0 | |
 | `rating_sum` | `integer` not null default 0 | |
-| `total_visits` | `integer` not null default 0 | From visit jobs |
+| `total_visits` | `integer` not null default 0 | |
 | `created_by` | `text` not null | FK → `users.id` |
 | sync columns | | |
 
----
-
-## `sites`
+### `sites`
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -58,19 +59,19 @@ Keyed by Firebase Auth uid (text, not uuid).
 | `campground_id` | `uuid` not null | FK → `campgrounds.id` |
 | `campground_name` | `text` not null | Denormalized (matches app today) |
 | `site_number` | `text` not null | |
-| `amenities` | `text[]` not null default `'{}'` | firering, picnicTable, … |
+| `amenities` | `text[]` not null default `'{}'` | firering, picnicTable, shower, restroom, waterHookup, electricalHookup, potableWater, wifi |
 | `tags` | `text[]` not null default `'{}'` | |
-| `latitude` / `longitude` | `double precision` null | Optional GPS |
-| `average_rating` / `total_ratings` / `rating_sum` | | Derived from `site_ratings` |
+| `location` | PostGIS point null | Optional GPS |
+| `average_rating` | `double precision` not null default 0 | Derived from `site_ratings` |
+| `total_ratings` | `integer` not null default 0 | |
+| `rating_sum` | `integer` not null default 0 | |
 | `total_visits` | `integer` not null default 0 | |
 | `created_by` | `text` not null | FK → `users.id` |
 | sync columns | | |
 
----
+### `site_ratings`
 
-## `site_ratings`
-
-Was `sites/{siteId}/ratings` subcollection.
+Was Firestore `sites/{siteId}/ratings`.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -81,9 +82,7 @@ Was `sites/{siteId}/ratings` subcollection.
 | `rating` | `smallint` not null | 1–5 |
 | sync columns | | |
 
----
-
-## `visits`
+### `visits`
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -91,72 +90,72 @@ Was `sites/{siteId}/ratings` subcollection.
 | `site_id` | `uuid` null | FK → `sites.id` |
 | `site_name` | `text` null | Denormalized |
 | `campground_name` | `text` null | Denormalized |
-| `created_by` | `text` not null | Owner |
-| `start_date` / `end_date` | `timestamptz` not null | |
+| `created_by` | `text` not null | Owner; FK → `users.id` |
+| `start_date` | `timestamptz` not null | |
+| `end_date` | `timestamptz` not null | |
 | `visit_rating` | `smallint` not null | Trip rating 1–5 |
 | `site_rating` | `smallint` not null | Site rating 1–5 |
 | `notes` | `text` null | |
 | `photos` | `text[]` not null default `'{}'` | Firebase Storage URLs |
 | `weather` | `jsonb` null | Array of weather objects |
-| `visibility` | `text` not null default `'private'` | private / public / shared |
-| `shared_with` | `text[]` not null default `'{}'` | Kept; sharing still deferred in product |
+| `visibility` | `text` not null default `'private'` | private / public / shared (parity; sharing still deferred in product) |
+| `shared_with` | `text[]` not null default `'{}'` | Parity with current model |
 | sync columns | | |
 
----
-
-## `personal_ratings`
+### `personal_ratings`
 
 | Column | Type | Notes |
 | --- | --- | --- |
-| `id` | `text` PK | Keep `{userId}_{targetType}_{targetId}` or switch to uuid + unique constraint |
+| `id` | `uuid` PK | Phone-minted |
 | `user_id` | `text` not null | FK → `users.id` |
-| `target_id` | `text` not null | Site or campground id |
-| `target_type` | `text` not null | `site` \| `campground` |
-| `rating_sum` / `total_ratings` / `average_rating` / `total_visits` | | |
+| `target_id` | `uuid` not null | Site or campground id |
+| `target_type` | `text` not null | `site` or `campground` |
+| `rating_sum` | `integer` not null default 0 | |
+| `total_ratings` | `integer` not null default 0 | |
+| `average_rating` | `double precision` not null default 0 | |
+| `total_visits` | `integer` not null default 0 | |
 | `last_visit_date` | `timestamptz` null | |
 | sync columns | | |
 
----
+**Unique constraint:** (`user_id`, `target_type`, `target_id`) where `deleted_at` is null (or equivalent partial unique index).
 
-## `feedback`
+### `feedback`
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | |
-| `user_id` | `text` not null | |
+| `user_id` | `text` not null | FK → `users.id` |
 | `email` | `text` null | |
 | `message` | `text` not null | |
 | `type` | `text` not null | bug / featureRequest / general |
-| `device` / `os_version` / `app_version` | `text` | |
-| `status` | `text` not null default `'new'` | |
-| `screenshots` | `text[]` | Storage URLs |
+| `device` | `text` not null | |
+| `os_version` | `text` not null | |
+| `app_version` | `text` not null | |
+| `status` | `text` not null default `'new'` | new / inProgress / closed / logged |
+| `screenshots` | `text[]` not null default `'{}'` | Storage URLs |
 | `github_link` | `text` null | |
 | sync columns | | |
 
----
+### `app_platforms` (version gating only)
 
-## `achievements`
+Replaces Firestore `app/{platform}` version fields. Release notes are **not** migrated.
 
-Catalog of achievement definitions (read for authenticated users; admin write).
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `text` PK | Platform key, e.g. `ios` |
+| `latest_version` | `text` not null | |
+| `required_version` | `text` not null | Minimum allowed app version |
+| sync columns | | |
 
-Exact columns TBD from current Firestore `achievements` docs when migrate script is written — include sync columns.
+## Authorization (row rules)
 
----
+Locked: enforce in **server code and database row rules** together. Server verifies the Firebase ID token and sets DB user context; row rules are the gate.
 
-## App config (version gate + release notes)
+- `users`: owner of own row; admin all
+- `visits`, `feedback`, `personal_ratings`, `site_ratings`: owning user; admin all
+- `campgrounds`, `sites`: authenticated read; create as authenticated; update/delete owner or admin
+- `app_platforms`: authenticated read; admin write
 
-Today under Firestore `app/ios` (+ release_notes). Options for Postgres:
+## Implementation
 
-1. `app_platforms` + `release_notes` + `release_note_entries` tables, or
-2. Keep reading version gate from Firestore `app/ios` for the first cut (public read already) and migrate later.
-
-**Recommendation for first cut:** migrate `app` into Postgres so the API is the single data plane; iOS pulls version/release notes via sync or a small public config route.
-
----
-
-## Open schema decisions (call in #15)
-
-1. PostGIS `geography(Point)` vs lat/lng + geohash columns  
-2. `personal_ratings.id` stay composite text vs uuid  
-3. Whether `shared_with` / `visibility` stay in v1 schema (yes for parity)  
-4. Whether `app` / release notes move in the first migrate  
+Tracked in [#15](https://github.com/Camp-Notes/ranger-station/issues/15).
