@@ -35,6 +35,10 @@ Decided 2026-09-08 via product grilling. Do not reopen these without a new decis
 | Authorization | **Both** server checks **and** Postgres row rules |
 | Admin role | Postgres `users` table keyed by Firebase uid |
 
+## Schema
+
+Draft table list and columns: [postgres-schema.md](./postgres-schema.md)
+
 ## Offline and sync
 
 - **Everything** works fully offline, including campgrounds and sites
