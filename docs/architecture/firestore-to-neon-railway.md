@@ -18,14 +18,23 @@ Decided 2026-09-08 via product grilling. Do not reopen these without a new decis
 
 ## Move off Firebase
 
-- All app data today in Firestore (campgrounds, sites, visits, ratings, users/profile, feedback, achievements, and related)
+- App data today in Firestore that is in scope for Postgres (see [postgres-schema.md](./postgres-schema.md))
 - **Data jobs** today in Cloud Functions (for example rating aggregates) → Railway Node server
+
+## Out of scope for this migration
+
+- Achievements
+- Release notes (not in use)
+- Realtime websocket/SSE live updates (push/pull sync instead)
+- Moving photos off Firebase Storage
+- Visit sharing (still deferred product-wise)
+- Moving Auth-triggered functions off Firebase in the first cut
 
 ## Target stack
 
 | Piece | Choice |
 | --- | --- |
-| Database | Neon Postgres — **one project**, branches for **dev** and **prod** |
+| Database | Neon Postgres — **one project**, branches for **dev** and **prod**; PostGIS enabled |
 | API repo | New `Camp-Notes/api` |
 | API host | Railway |
 | HTTP | Fastify |
@@ -37,11 +46,11 @@ Decided 2026-09-08 via product grilling. Do not reopen these without a new decis
 
 ## Schema
 
-Draft table list and columns: [postgres-schema.md](./postgres-schema.md)
+Locked tables and columns: [postgres-schema.md](./postgres-schema.md)
 
 ## Offline and sync
 
-- **Everything** works fully offline, including campgrounds and sites
+- **Everything in-scope** works fully offline, including campgrounds and sites
 - Phone is source of truth while offline; server is the sync backend
 - **Last-write-wins:** phone proposes `updated_at`; server accepts only if newer than stored
 - Sync over HTTP: **push** queued edits, then **pull** changes since a cursor
@@ -60,15 +69,8 @@ Draft table list and columns: [postgres-schema.md](./postgres-schema.md)
 4. Prod migrate + flip
 5. Short Firestore read-only rollback window, then remove hot Firestore paths
 
-## Out of scope (for this migration)
-
-- Realtime websocket/SSE live updates (push/pull sync instead)
-- Moving photos off Firebase Storage
-- Visit sharing (still deferred product-wise)
-- Moving Auth-triggered functions off Firebase in the first cut
-
 ## Related
 
 - Existing offline ask: [#3](https://github.com/Camp-Notes/ranger-station/issues/3) (this migration is how we actually get there)
 - Firebase projects today: `camp-notes-dev` (dev), `campmate-cctplus` (prod)
-- Implementation tickets: see issues under the parent epic in this repo / [Camp Notes project](https://github.com/orgs/Camp-Notes/projects/2)
+- Implementation tickets: see issues under the parent epic [#13](https://github.com/Camp-Notes/ranger-station/issues/13) / [Camp Notes project](https://github.com/orgs/Camp-Notes/projects/2)
