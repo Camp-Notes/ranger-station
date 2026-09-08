@@ -1,29 +1,18 @@
 # Postgres schema
 
-Relational schema for Camp Notes on Neon. Shapes follow [`campnotes-ios/docs/datamodel.md`](https://github.com/Camp-Notes/campnotes-ios/blob/main/docs/datamodel.md) and `AppPackage/Sources/Models`.
+Camp Notes stores application data in Neon Postgres with PostGIS for campground and site locations. Parent: [firestore-to-neon-railway.md](./firestore-to-neon-railway.md).
 
-Parent: [firestore-to-neon-railway.md](./firestore-to-neon-railway.md)
+## Conventions
 
-PostGIS is enabled. Campground and site locations are PostGIS points.
+- Primary keys are phone-minted UUIDs, except `users.id`, which is the Firebase uid (`text`).
+- Every mutable synced row has `created_at`, `updated_at`, and `deleted_at` (`timestamptz`; `deleted_at` null until soft-deleted).
+- Conflict rule: the phone proposes `updated_at`; the server accepts the write only if that timestamp is newer than the stored value (last-write-wins).
+- Foreign keys use `ON DELETE RESTRICT`.
+- **Synced tables:** `users`, `user_auth_providers`, `campgrounds`, `sites`, `site_amenities`, `site_tags`, `visits`, `visit_weather`, `visit_photos`, `visit_shares`, `site_ratings`, `feedback`, `feedback_screenshots`.
+- **Config:** `app_platforms` (not synced; no `deleted_at`).
+- **Views (not tables, not synced):** `site_stats`, `campground_stats`, `personal_site_stats`, `personal_campground_stats`.
 
-### Synced tables
-
-These participate in offline push/pull sync. Each includes:
-
-- `id` — primary key; phone-minted UUID unless noted (`users.id` is the Firebase uid)
-- `created_at` — `timestamptz`
-- `updated_at` — `timestamptz`; phone proposes, server accepts only if newer than stored
-- `deleted_at` — `timestamptz` null; soft-delete tombstone
-
-Synced tables: `users`, `user_auth_providers`, `campgrounds`, `sites`, `visits`, `visit_weather`, `site_ratings`, `personal_ratings`, `feedback`.
-
-Foreign keys use `ON DELETE RESTRICT` so soft-deleted rows stay coherent.
-
-### Config tables
-
-`app_platforms` is not synced. The app fetches version gating and checks it on launch (and when appropriate). It is not part of the offline outbox or cursor pull.
-
-## Entity relationships
+## Relationships
 
 ```mermaid
 erDiagram
@@ -32,98 +21,87 @@ erDiagram
   users ||--o{ sites : created_by
   users ||--o{ visits : created_by
   users ||--o{ site_ratings : user_id
-  users ||--o{ personal_ratings : user_id
+  users ||--o{ visit_shares : shared_with_user_id
   users ||--o{ feedback : user_id
 
   campgrounds ||--o{ sites : campground_id
+  sites ||--o{ site_amenities : site_id
+  sites ||--o{ site_tags : site_id
   sites ||--o{ visits : site_id
   sites ||--o{ site_ratings : site_id
-  visits ||--o| site_ratings : visit_id
   visits ||--o{ visit_weather : visit_id
+  visits ||--o{ visit_photos : visit_id
+  visits ||--o{ visit_shares : visit_id
+  visits ||--o| site_ratings : visit_id
+  feedback ||--o{ feedback_screenshots : feedback_id
 
   users {
     text id PK
     text display_name
     text role
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
   }
 
   user_auth_providers {
     uuid id PK
     text user_id FK
     text provider
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
   }
 
   campgrounds {
     uuid id PK
     text name
     geometry location
-    float average_rating
-    int total_ratings
-    int rating_sum
-    int total_visits
     text created_by FK
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
   }
 
   sites {
     uuid id PK
     uuid campground_id FK
-    text campground_name
     text site_number
-    text_array amenities
-    text_array tags
     geometry location
-    float average_rating
-    int total_ratings
-    int rating_sum
-    int total_visits
     text created_by FK
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
+  }
+
+  site_amenities {
+    uuid id PK
+    uuid site_id FK
+    text amenity
+  }
+
+  site_tags {
+    uuid id PK
+    uuid site_id FK
+    text tag
   }
 
   visits {
     uuid id PK
     uuid site_id FK
-    text site_name
-    text campground_name
     text created_by FK
     timestamptz start_date
     timestamptz end_date
     smallint visit_rating
     smallint site_rating
-    text notes
-    text_array photos
     text visibility
-    text_array shared_with
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
   }
 
   visit_weather {
     uuid id PK
     uuid visit_id FK
     date day
-    float temp_high
-    float temp_low
-    text temp_unit
-    text conditions
-    float precipitation
-    float wind_speed
-    float humidity
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
+  }
+
+  visit_photos {
+    uuid id PK
+    uuid visit_id FK
+    text storage_url
+    int sort_order
+  }
+
+  visit_shares {
+    uuid id PK
+    uuid visit_id FK
+    text shared_with_user_id FK
   }
 
   site_ratings {
@@ -132,41 +110,22 @@ erDiagram
     text user_id FK
     uuid visit_id FK
     smallint rating
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
-  }
-
-  personal_ratings {
-    uuid id PK
-    text user_id FK
-    uuid target_id
-    text target_type
-    int rating_sum
-    int total_ratings
-    float average_rating
-    int total_visits
-    timestamptz last_visit_date
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
   }
 
   feedback {
     uuid id PK
     text user_id FK
-    text email
+    text contact_email
     text message
     text type
-    text device
-    text os_version
-    text app_version
     text status
-    text_array screenshots
-    text github_link
-    timestamptz created_at
-    timestamptz updated_at
-    timestamptz deleted_at
+  }
+
+  feedback_screenshots {
+    uuid id PK
+    uuid feedback_id FK
+    text storage_url
+    int sort_order
   }
 
   app_platforms {
@@ -177,194 +136,232 @@ erDiagram
   }
 ```
 
-`personal_ratings` targets either a site or a campground via `target_type` (`site` | `campground`) plus `target_id`. That cannot be a single foreign key; enforce with `target_type` and application / row-rule checks. Unique on (`user_id`, `target_type`, `target_id`) where `deleted_at` is null.
-
-`sites.campground_name`, `visits.site_name`, and `visits.campground_name` are denormalized for offline and UI; the foreign key is authoritative when present.
-
-`visits.shared_with` is a `text[]` of Firebase uids, not a join table.
-
-`app_platforms` has no foreign key to `users` and is not in the sync protocol.
-
 ## Tables
 
 ### `users`
 
-Firebase uid lives here as the primary key. Other tables reference this row (`created_by` / `user_id`) for ownership.
+Account profile keyed by Firebase uid.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `text` PK | Firebase uid |
 | `display_name` | `text` null | |
-| `role` | `text` not null default `'user'` | `'admin'` for admins |
+| `role` | `text` not null default `'user'` | `'user'` or `'admin'` |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
-Email is not stored here. Auth owns email; feedback may carry an optional contact email on the feedback row. Linked sign-in methods live in `user_auth_providers`.
-
 ### `user_auth_providers`
 
-One row per Auth sign-in method linked to the account. Denormalized mirror of Auth for the app user model (same role as today’s Firestore `linkedProviders` array). Auth remains source of truth for sign-in.
+Linked sign-in methods for an account.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
-| `user_id` | `text` not null | FK → `users.id` (owner) |
-| `provider` | `text` not null | `email` or `apple` |
+| `user_id` | `text` not null | FK → `users.id` |
+| `provider` | `text` not null | `email` or `apple`; unique with `user_id` where not deleted |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
-Unique on (`user_id`, `provider`) where `deleted_at` is null.
-
 ### `campgrounds`
+
+Campground places.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
 | `name` | `text` not null | |
 | `location` | PostGIS point not null | |
-| `average_rating` | `double precision` not null default 0 | Derived |
-| `total_ratings` | `integer` not null default 0 | |
-| `rating_sum` | `integer` not null default 0 | |
-| `total_visits` | `integer` not null default 0 | |
-| `created_by` | `text` not null | FK → `users.id` (owner) |
+| `created_by` | `text` not null | FK → `users.id` |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
 ### `sites`
 
+Individual sites within a campground.
+
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
 | `campground_id` | `uuid` not null | FK → `campgrounds.id` |
-| `campground_name` | `text` not null | Denormalized |
 | `site_number` | `text` not null | |
-| `amenities` | `text[]` not null default `'{}'` | firering, picnicTable, shower, restroom, waterHookup, electricalHookup, potableWater, wifi |
-| `tags` | `text[]` not null default `'{}'` | |
 | `location` | PostGIS point null | |
-| `average_rating` | `double precision` not null default 0 | Derived from `site_ratings` |
-| `total_ratings` | `integer` not null default 0 | |
-| `rating_sum` | `integer` not null default 0 | |
-| `total_visits` | `integer` not null default 0 | |
-| `created_by` | `text` not null | FK → `users.id` (owner) |
+| `created_by` | `text` not null | FK → `users.id` |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | |
+| `deleted_at` | `timestamptz` null | |
+
+### `site_amenities`
+
+Amenities attached to a site.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | Phone-minted |
+| `site_id` | `uuid` not null | FK → `sites.id` |
+| `amenity` | `text` not null | `firering`, `picnicTable`, `shower`, `restroom`, `waterHookup`, `electricalHookup`, `potableWater`, `wifi`; unique with `site_id` where not deleted |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | |
+| `deleted_at` | `timestamptz` null | |
+
+### `site_tags`
+
+Free-form tags on a site.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | Phone-minted |
+| `site_id` | `uuid` not null | FK → `sites.id` |
+| `tag` | `text` not null | Unique with `site_id` where not deleted |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
 ### `visits`
 
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `uuid` PK | Phone-minted |
-| `site_id` | `uuid` null | FK → `sites.id` |
-| `site_name` | `text` null | Denormalized |
-| `campground_name` | `text` null | Denormalized |
-| `created_by` | `text` not null | FK → `users.id` (owner) |
-| `start_date` | `timestamptz` not null | |
-| `end_date` | `timestamptz` not null | |
-| `visit_rating` | `smallint` not null | 1–5 |
-| `site_rating` | `smallint` not null | 1–5 |
-| `notes` | `text` null | |
-| `photos` | `text[]` not null default `'{}'` | Firebase Storage URLs |
-| `visibility` | `text` not null default `'private'` | private / public / shared |
-| `shared_with` | `text[]` not null default `'{}'` | Firebase uids |
-| `created_at` | `timestamptz` not null | |
-| `updated_at` | `timestamptz` not null | |
-| `deleted_at` | `timestamptz` null | |
-
-Weather lives in `visit_weather`, not on this row.
-
-### `visit_weather`
-
-One row per calendar day of weather for a visit.
-
-| Column | Type | Notes |
-| --- | --- | --- |
-| `id` | `uuid` PK | Phone-minted |
-| `visit_id` | `uuid` not null | FK → `visits.id` |
-| `day` | `date` not null | |
-| `temp_high` | `double precision` null | |
-| `temp_low` | `double precision` null | |
-| `temp_unit` | `text` null | `F` or `C` |
-| `conditions` | `text` null | e.g. Sunny, Rainy, Cloudy |
-| `precipitation` | `double precision` null | |
-| `wind_speed` | `double precision` null | |
-| `humidity` | `double precision` null | Percentage |
-| `created_at` | `timestamptz` not null | |
-| `updated_at` | `timestamptz` not null | |
-| `deleted_at` | `timestamptz` null | |
-
-Unique on (`visit_id`, `day`) where `deleted_at` is null.
-
-### `site_ratings`
+A user's stay at a site.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
 | `site_id` | `uuid` not null | FK → `sites.id` |
-| `user_id` | `text` not null | FK → `users.id` (owner of this rating) |
+| `created_by` | `text` not null | FK → `users.id` |
+| `start_date` | `timestamptz` not null | |
+| `end_date` | `timestamptz` not null | |
+| `visit_rating` | `smallint` not null | 1–5 |
+| `site_rating` | `smallint` not null | 1–5 |
+| `notes` | `text` null | |
+| `visibility` | `text` not null default `'private'` | `private`, `public`, or `shared` |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | |
+| `deleted_at` | `timestamptz` null | |
+
+### `visit_weather`
+
+Weather for one calendar day of a visit.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | Phone-minted |
+| `visit_id` | `uuid` not null | FK → `visits.id` |
+| `day` | `date` not null | Unique with `visit_id` where not deleted |
+| `temp_high` | `double precision` null | |
+| `temp_low` | `double precision` null | |
+| `temp_unit` | `text` null | `F` or `C` |
+| `conditions` | `text` null | |
+| `precipitation` | `double precision` null | |
+| `wind_speed` | `double precision` null | |
+| `humidity` | `double precision` null | |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | |
+| `deleted_at` | `timestamptz` null | |
+
+### `visit_photos`
+
+Photo metadata for a visit (file in Storage; URL here).
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | Phone-minted |
+| `visit_id` | `uuid` not null | FK → `visits.id` |
+| `storage_url` | `text` not null | |
+| `sort_order` | `integer` not null default 0 | |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | |
+| `deleted_at` | `timestamptz` null | |
+
+### `visit_shares`
+
+Users a visit is shared with when visibility is `shared`.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | Phone-minted |
+| `visit_id` | `uuid` not null | FK → `visits.id` |
+| `shared_with_user_id` | `text` not null | FK → `users.id`; unique with `visit_id` where not deleted |
+| `created_at` | `timestamptz` not null | |
+| `updated_at` | `timestamptz` not null | |
+| `deleted_at` | `timestamptz` null | |
+
+### `site_ratings`
+
+Per-user site rating, optionally tied to a visit.
+
+| Column | Type | Notes |
+| --- | --- | --- |
+| `id` | `uuid` PK | Phone-minted |
+| `site_id` | `uuid` not null | FK → `sites.id` |
+| `user_id` | `text` not null | FK → `users.id` |
 | `visit_id` | `uuid` null | FK → `visits.id` |
 | `rating` | `smallint` not null | 1–5 |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
-### `personal_ratings`
+### `feedback`
+
+In-app feedback submissions.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
-| `user_id` | `text` not null | FK → `users.id` (owner of this aggregate) |
-| `target_id` | `uuid` not null | Site or campground id |
-| `target_type` | `text` not null | `site` or `campground` |
-| `rating_sum` | `integer` not null default 0 | |
-| `total_ratings` | `integer` not null default 0 | |
-| `average_rating` | `double precision` not null default 0 | |
-| `total_visits` | `integer` not null default 0 | |
-| `last_visit_date` | `timestamptz` null | |
+| `user_id` | `text` not null | FK → `users.id` |
+| `contact_email` | `text` null | Optional follow-up contact |
+| `message` | `text` not null | |
+| `type` | `text` not null | `bug`, `featureRequest`, or `general` |
+| `device` | `text` not null | |
+| `os_version` | `text` not null | |
+| `app_version` | `text` not null | |
+| `status` | `text` not null default `'new'` | `new`, `inProgress`, `closed`, or `logged` |
+| `github_link` | `text` null | |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
-Unique on (`user_id`, `target_type`, `target_id`) where `deleted_at` is null.
+### `feedback_screenshots`
 
-### `feedback`
+Screenshot metadata for feedback (file in Storage; URL here).
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
-| `user_id` | `text` not null | FK → `users.id` (owner of this feedback) |
-| `email` | `text` null | Optional contact for follow-up; not the account email mirror |
-| `message` | `text` not null | |
-| `type` | `text` not null | bug / featureRequest / general |
-| `device` | `text` not null | |
-| `os_version` | `text` not null | |
-| `app_version` | `text` not null | |
-| `status` | `text` not null default `'new'` | new / inProgress / closed / logged |
-| `screenshots` | `text[]` not null default `'{}'` | Storage URLs |
-| `github_link` | `text` null | |
+| `feedback_id` | `uuid` not null | FK → `feedback.id` |
+| `storage_url` | `text` not null | |
+| `sort_order` | `integer` not null default 0 | |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
 ### `app_platforms`
 
-Version gating. Read by the client when it checks whether the installed build is allowed; not written through sync.
+Version gating config. Not synced.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `text` PK | e.g. `ios` |
 | `latest_version` | `text` not null | |
 | `required_version` | `text` not null | Minimum allowed app version |
-| `updated_at` | `timestamptz` not null | Last admin change |
+| `updated_at` | `timestamptz` not null | |
 
-## Authorization
+## Views
 
-The server verifies the Firebase ID token and sets database user context. Postgres row rules enforce access:
+Computed from `site_ratings` and `visits`. Not tables. Not synced.
+
+| View | Derives |
+| --- | --- |
+| `site_stats` | Per-site rating and visit aggregates from `site_ratings` and `visits` |
+| `campground_stats` | Per-campground aggregates rolled up from site-level ratings and visits |
+| `personal_site_stats` | Per-user, per-site aggregates from that user's `site_ratings` and `visits` |
+| `personal_campground_stats` | Per-user, per-campground aggregates from that user's `site_ratings` and `visits` |
+
+## Access
+
+The server verifies the Firebase ID token and sets database user context. Postgres row rules:
 
 - `users`, `user_auth_providers`: owner of own row; admin all
-- `visits`, `visit_weather`, `feedback`, `personal_ratings`, `site_ratings`: owning user (via visit owner or direct user id); admin all
-- `campgrounds`, `sites`: authenticated read; create as authenticated; update/delete owner or admin
+- `visits`, `visit_weather`, `visit_photos`, `visit_shares`, `feedback`, `feedback_screenshots`, `site_ratings`: owning user (via visit owner or direct user id); shared visits readable by `visit_shares`; admin all
+- `campgrounds`, `sites`, `site_amenities`, `site_tags`: authenticated read; create as authenticated; update/delete owner or admin
 - `app_platforms`: authenticated read; admin write
+- Stats views: same visibility as the underlying ratings and visits
