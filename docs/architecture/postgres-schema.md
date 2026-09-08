@@ -9,6 +9,7 @@ Camp Notes stores application data in Neon Postgres with PostGIS for campground 
 - Conflict rule: the phone proposes `updated_at`; the server accepts the write only if that timestamp is newer than the stored value (last-write-wins).
 - Foreign keys use `ON DELETE RESTRICT`.
 - Relationship names in the diagram are roles (how entities relate), not join-column names.
+- Site scores live only in `site_ratings` (not on `visits`). Trip quality is `visits.visit_rating`.
 - **Synced tables:** `users`, `user_auth_providers`, `campgrounds`, `sites`, `site_amenities`, `site_tags`, `visits`, `visit_weather`, `visit_photos`, `visit_shares`, `site_ratings`, `feedback`, `feedback_screenshots`.
 - **Config:** `app_platforms` (not synced; no `deleted_at`).
 - **Views (not tables, not synced):** `site_stats`, `campground_stats`, `personal_site_stats`, `personal_campground_stats`.
@@ -82,7 +83,6 @@ erDiagram
     timestamptz start_date
     timestamptz end_date
     smallint visit_rating
-    smallint site_rating
     text visibility
   }
 
@@ -222,7 +222,7 @@ Free-form tags on a site.
 
 ### `visits`
 
-A user's stay at a site.
+A user's stay at a site. Trip quality is `visit_rating`. Site score is not stored here — see `site_ratings`.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -231,8 +231,7 @@ A user's stay at a site.
 | `created_by` | `text` not null | FK → `users.id` |
 | `start_date` | `timestamptz` not null | |
 | `end_date` | `timestamptz` not null | |
-| `visit_rating` | `smallint` not null | 1–5 |
-| `site_rating` | `smallint` not null | 1–5 |
+| `visit_rating` | `smallint` not null | 1–5; how the trip went |
 | `notes` | `text` null | |
 | `visibility` | `text` not null default `'private'` | `private`, `public`, or `shared` |
 | `created_at` | `timestamptz` not null | |
@@ -288,7 +287,7 @@ Users a visit is shared with when visibility is `shared`.
 
 ### `site_ratings`
 
-Per-user site rating, optionally tied to a visit.
+Sole store of site scores (1–5). Optionally linked to the visit that produced the rating.
 
 | Column | Type | Notes |
 | --- | --- | --- |
@@ -296,7 +295,7 @@ Per-user site rating, optionally tied to a visit.
 | `site_id` | `uuid` not null | FK → `sites.id` |
 | `created_by` | `text` not null | FK → `users.id` |
 | `visit_id` | `uuid` null | FK → `visits.id` |
-| `rating` | `smallint` not null | 1–5 |
+| `rating` | `smallint` not null | 1–5; how the campsite was |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
@@ -352,8 +351,8 @@ Computed from `site_ratings` and `visits`. Not tables. Not synced.
 
 | View | Derives |
 | --- | --- |
-| `site_stats` | Per-site rating and visit aggregates from `site_ratings` and `visits` |
-| `campground_stats` | Per-campground aggregates rolled up from site-level ratings and visits |
+| `site_stats` | Per-site rating aggregates from `site_ratings`; visit counts from `visits` |
+| `campground_stats` | Per-campground aggregates rolled up from site-level `site_ratings` and `visits` |
 | `personal_site_stats` | Per-user, per-site aggregates from that user's `site_ratings` and `visits` |
 | `personal_campground_stats` | Per-user, per-campground aggregates from that user's `site_ratings` and `visits` |
 
