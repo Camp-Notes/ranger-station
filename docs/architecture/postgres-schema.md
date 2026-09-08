@@ -6,14 +6,22 @@ Parent: [firestore-to-neon-railway.md](./firestore-to-neon-railway.md)
 
 PostGIS is enabled. Campground and site locations are PostGIS points.
 
-Every synced table includes:
+### Synced tables
 
-- `id` — primary key; phone-minted UUID unless noted
+These participate in offline push/pull sync. Each includes:
+
+- `id` — primary key; phone-minted UUID unless noted (`users.id` is the Firebase uid)
 - `created_at` — `timestamptz`
 - `updated_at` — `timestamptz`; phone proposes, server accepts only if newer than stored
 - `deleted_at` — `timestamptz` null; soft-delete tombstone
 
+Synced tables: `users`, `campgrounds`, `sites`, `visits`, `visit_weather`, `site_ratings`, `personal_ratings`, `feedback`.
+
 Foreign keys use `ON DELETE RESTRICT` so soft-deleted rows stay coherent.
+
+### Config tables
+
+`app_platforms` is not synced. The app fetches version gating and checks it on launch (and when appropriate). It is not part of the offline outbox or cursor pull.
 
 ## Entity relationships
 
@@ -157,9 +165,7 @@ erDiagram
     text id PK
     text latest_version
     text required_version
-    timestamptz created_at
     timestamptz updated_at
-    timestamptz deleted_at
   }
 ```
 
@@ -169,7 +175,7 @@ erDiagram
 
 `visits.shared_with` is a `text[]` of user ids, not a join table.
 
-`app_platforms` has no foreign key to `users`.
+`app_platforms` has no foreign key to `users` and is not in the sync protocol.
 
 ## Tables
 
@@ -243,17 +249,17 @@ erDiagram
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
 
-Weather is not stored on the visit row. See `visit_weather`.
+Weather lives in `visit_weather`, not on this row.
 
 ### `visit_weather`
 
-One row per day of weather attached to a visit (replaces the former weather array on the visit document).
+One row per calendar day of weather for a visit.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
 | `visit_id` | `uuid` not null | FK → `visits.id` |
-| `day` | `date` not null | Calendar day for this observation |
+| `day` | `date` not null | |
 | `temp_high` | `double precision` null | |
 | `temp_low` | `double precision` null | |
 | `temp_unit` | `text` null | `F` or `C` |
@@ -320,16 +326,14 @@ Unique on (`user_id`, `target_type`, `target_id`) where `deleted_at` is null.
 
 ### `app_platforms`
 
-Version gating per platform.
+Version gating. Read by the client when it checks whether the installed build is allowed; not written through sync.
 
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `text` PK | e.g. `ios` |
 | `latest_version` | `text` not null | |
 | `required_version` | `text` not null | Minimum allowed app version |
-| `created_at` | `timestamptz` not null | |
-| `updated_at` | `timestamptz` not null | |
-| `deleted_at` | `timestamptz` null | |
+| `updated_at` | `timestamptz` not null | Last admin change |
 
 ## Authorization
 
