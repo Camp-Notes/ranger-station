@@ -8,6 +8,7 @@ Camp Notes stores application data in Neon Postgres with PostGIS for campground 
 - Every mutable synced row has `created_at`, `updated_at`, and `deleted_at` (`timestamptz`; `deleted_at` null until soft-deleted).
 - Conflict rule: the phone proposes `updated_at`; the server accepts the write only if that timestamp is newer than the stored value (last-write-wins).
 - Foreign keys use `ON DELETE RESTRICT`.
+- Relationship names in the diagram are roles (how entities relate), not join-column names.
 - **Synced tables:** `users`, `user_auth_providers`, `campgrounds`, `sites`, `site_amenities`, `site_tags`, `visits`, `visit_weather`, `visit_photos`, `visit_shares`, `site_ratings`, `feedback`, `feedback_screenshots`.
 - **Config:** `app_platforms` (not synced; no `deleted_at`).
 - **Views (not tables, not synced):** `site_stats`, `campground_stats`, `personal_site_stats`, `personal_campground_stats`.
@@ -16,24 +17,24 @@ Camp Notes stores application data in Neon Postgres with PostGIS for campground 
 
 ```mermaid
 erDiagram
-  users ||--o{ user_auth_providers : user_id
-  users ||--o{ campgrounds : created_by
-  users ||--o{ sites : created_by
-  users ||--o{ visits : created_by
-  users ||--o{ site_ratings : user_id
-  users ||--o{ visit_shares : shared_with_user_id
-  users ||--o{ feedback : user_id
+  users ||--o{ user_auth_providers : has
+  users ||--o{ campgrounds : creates
+  users ||--o{ sites : creates
+  users ||--o{ visits : creates
+  users ||--o{ site_ratings : rates
+  users ||--o{ visit_shares : is_shared_with
+  users ||--o{ feedback : submits
 
-  campgrounds ||--o{ sites : campground_id
-  sites ||--o{ site_amenities : site_id
-  sites ||--o{ site_tags : site_id
-  sites ||--o{ visits : site_id
-  sites ||--o{ site_ratings : site_id
-  visits ||--o{ visit_weather : visit_id
-  visits ||--o{ visit_photos : visit_id
-  visits ||--o{ visit_shares : visit_id
-  visits ||--o| site_ratings : visit_id
-  feedback ||--o{ feedback_screenshots : feedback_id
+  campgrounds ||--o{ sites : contains
+  sites ||--o{ site_amenities : has
+  sites ||--o{ site_tags : has
+  sites ||--o{ visits : hosts
+  sites ||--o{ site_ratings : receives
+  visits ||--o{ visit_weather : has
+  visits ||--o{ visit_photos : has
+  visits ||--o{ visit_shares : shared_with
+  visits ||--o| site_ratings : produced
+  feedback ||--o{ feedback_screenshots : has
 
   users {
     text id PK
@@ -43,7 +44,7 @@ erDiagram
 
   user_auth_providers {
     uuid id PK
-    text user_id FK
+    text account_id FK
     text provider
   }
 
@@ -107,14 +108,14 @@ erDiagram
   site_ratings {
     uuid id PK
     uuid site_id FK
-    text user_id FK
+    text created_by FK
     uuid visit_id FK
     smallint rating
   }
 
   feedback {
     uuid id PK
-    text user_id FK
+    text created_by FK
     text contact_email
     text message
     text type
@@ -158,8 +159,8 @@ Linked sign-in methods for an account.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
-| `user_id` | `text` not null | FK → `users.id` |
-| `provider` | `text` not null | `email` or `apple`; unique with `user_id` where not deleted |
+| `account_id` | `text` not null | FK → `users.id` |
+| `provider` | `text` not null | `email` or `apple`; unique with `account_id` where not deleted |
 | `created_at` | `timestamptz` not null | |
 | `updated_at` | `timestamptz` not null | |
 | `deleted_at` | `timestamptz` null | |
@@ -293,7 +294,7 @@ Per-user site rating, optionally tied to a visit.
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
 | `site_id` | `uuid` not null | FK → `sites.id` |
-| `user_id` | `text` not null | FK → `users.id` |
+| `created_by` | `text` not null | FK → `users.id` |
 | `visit_id` | `uuid` null | FK → `visits.id` |
 | `rating` | `smallint` not null | 1–5 |
 | `created_at` | `timestamptz` not null | |
@@ -307,7 +308,7 @@ In-app feedback submissions.
 | Column | Type | Notes |
 | --- | --- | --- |
 | `id` | `uuid` PK | Phone-minted |
-| `user_id` | `text` not null | FK → `users.id` |
+| `created_by` | `text` not null | FK → `users.id` |
 | `contact_email` | `text` null | Optional follow-up contact |
 | `message` | `text` not null | |
 | `type` | `text` not null | `bug`, `featureRequest`, or `general` |
@@ -350,7 +351,7 @@ Version gating config. Not synced.
 Computed from `site_ratings` and `visits`. Not tables. Not synced.
 
 | View | Derives |
-| --- | --- |
+| --- | --- | --- |
 | `site_stats` | Per-site rating and visit aggregates from `site_ratings` and `visits` |
 | `campground_stats` | Per-campground aggregates rolled up from site-level ratings and visits |
 | `personal_site_stats` | Per-user, per-site aggregates from that user's `site_ratings` and `visits` |
@@ -361,7 +362,7 @@ Computed from `site_ratings` and `visits`. Not tables. Not synced.
 The server verifies the Firebase ID token and sets database user context. Postgres row rules:
 
 - `users`, `user_auth_providers`: owner of own row; admin all
-- `visits`, `visit_weather`, `visit_photos`, `visit_shares`, `feedback`, `feedback_screenshots`, `site_ratings`: owning user (via visit owner or direct user id); shared visits readable by `visit_shares`; admin all
+- `visits`, `visit_weather`, `visit_photos`, `visit_shares`, `feedback`, `feedback_screenshots`, `site_ratings`: owning user (via `created_by` or visit owner); shared visits readable by `visit_shares`; admin all
 - `campgrounds`, `sites`, `site_amenities`, `site_tags`: authenticated read; create as authenticated; update/delete owner or admin
 - `app_platforms`: authenticated read; admin write
 - Stats views: same visibility as the underlying ratings and visits
