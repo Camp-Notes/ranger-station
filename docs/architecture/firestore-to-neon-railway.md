@@ -1,76 +1,34 @@
-# Firestore → Neon + Railway migration
+# Firestore → Neon + Railway
 
-Locked architecture decisions for moving Camp Notes off Firestore onto Postgres (Neon) and a Node API (Railway), while keeping Firebase Auth and Firebase Storage.
+Camp Notes data lives in Neon Postgres. The iOS app talks to a Node API on Railway. Firebase remains for Auth and Storage. Auth-triggered Cloud Functions (for example account deletion) stay on Firebase. Rating aggregates and other data jobs run on the Railway API.
 
-Decided 2026-09-08 via product grilling. Do not reopen these without a new decision.
-
-## Why
-
-- Firestore read cost and rule complexity
-- Prefer Postgres row rules plus server checks
-- Want a real offline-first iOS experience (including campgrounds and sites)
-
-## Stay on Firebase
-
-- **Auth** (including anonymous users)
-- **Storage** (photos)
-- **Auth-triggered Cloud Functions** (for example delete-user hooks)
-
-## Move off Firebase
-
-- App data today in Firestore that is in scope for Postgres (see [postgres-schema.md](./postgres-schema.md))
-- **Data jobs** today in Cloud Functions (for example rating aggregates) → Railway Node server
-
-## Out of scope for this migration
-
-- Achievements
-- Release notes (not in use)
-- Realtime websocket/SSE live updates (push/pull sync instead)
-- Moving photos off Firebase Storage
-- Visit sharing (still deferred product-wise)
-- Moving Auth-triggered functions off Firebase in the first cut
-
-## Target stack
+## Stack
 
 | Piece | Choice |
 | --- | --- |
-| Database | Neon Postgres — **one project**, branches for **dev** and **prod**; PostGIS enabled |
-| API repo | New `Camp-Notes/api` |
-| API host | Railway |
+| Database | Neon Postgres — one project, branches for dev and prod; PostGIS enabled |
+| API | `Camp-Notes/api` on Railway |
 | HTTP | Fastify |
-| SQL toolkit | Drizzle |
+| SQL | Drizzle |
 | Phone store | SwiftData |
-| Auth to API | Firebase ID token; server verifies and sets DB user context |
-| Authorization | **Both** server checks **and** Postgres row rules |
-| Admin role | Postgres `users` table keyed by Firebase uid |
+| Auth to API | Firebase ID token; server verifies and sets database user context |
+| Authorization | Server checks and Postgres row rules |
+| Admin role | `users.role` in Postgres, keyed by Firebase uid |
 
-## Schema
+Schema: [postgres-schema.md](./postgres-schema.md)
 
-Locked tables and columns: [postgres-schema.md](./postgres-schema.md)
+Firebase projects today: `camp-notes-dev` (dev), `campmate-cctplus` (prod).
 
 ## Offline and sync
 
-- **Everything in-scope** works fully offline, including campgrounds and sites
-- Phone is source of truth while offline; server is the sync backend
-- **Last-write-wins:** phone proposes `updated_at`; server accepts only if newer than stored
-- Sync over HTTP: **push** queued edits, then **pull** changes since a cursor
-- New records: **phone creates UUIDs**; server accepts them (unique constraint as backstop)
-- **Soft deletes** with tombstones so deletes sync across devices
-- **Photos:** queue on phone → upload to Firebase Storage when online → sync download URL with the record
-- **Anonymous** Firebase users sync like signed-in users
+The phone holds the working copy in SwiftData. Campgrounds, sites, visits, and the rest of the migrated data work without network.
+
+When online, the app pushes queued edits, then pulls changes since a cursor over HTTP. Conflict rule: the phone sends `updated_at`; the server accepts the write only if that timestamp is newer than what is stored. New rows use phone-minted UUIDs. Deletes are soft (`deleted_at`) so they propagate on pull.
+
+Photos stay in Firebase Storage: the phone queues local files, uploads when online, then syncs the download URL with the record.
+
+Anonymous Firebase users sync the same way as signed-in users.
 
 ## Cutover
 
-**Hard cutover** (not a long dual-write strangler):
-
-1. Build API + schema to parity
-2. Rehearse Firestore → Postgres migrate against the Neon **dev** branch
-3. TestFlight build pointed at the API; soak
-4. Prod migrate + flip
-5. Short Firestore read-only rollback window, then remove hot Firestore paths
-
-## Related
-
-- Existing offline ask: [#3](https://github.com/Camp-Notes/ranger-station/issues/3) (this migration is how we actually get there)
-- Firebase projects today: `camp-notes-dev` (dev), `campmate-cctplus` (prod)
-- Implementation tickets: see issues under the parent epic [#13](https://github.com/Camp-Notes/ranger-station/issues/13) / [Camp Notes project](https://github.com/orgs/Camp-Notes/projects/2)
+Hard cutover: build API and schema, rehearse Firestore → Postgres migrate on the Neon dev branch, soak a TestFlight build against the API, run prod migrate and flip, keep a short Firestore read-only window, then remove hot Firestore data paths from the app.
